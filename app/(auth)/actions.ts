@@ -1,15 +1,11 @@
 "use server";
 
+import { AuthError } from "next-auth";
 import { z } from "zod";
-
-import { createUser, getUser } from "@/lib/db/queries";
+import { authFormSchema } from "@/lib/auth/credentials-schema";
+import { createUser, getUserByUsername } from "@/lib/db/queries";
 
 import { signIn } from "./auth";
-
-const authFormSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(6),
-});
 
 export type LoginActionState = {
   status: "idle" | "in_progress" | "success" | "failed" | "invalid_data";
@@ -21,18 +17,22 @@ export const login = async (
 ): Promise<LoginActionState> => {
   try {
     const validatedData = authFormSchema.parse({
-      email: formData.get("email"),
+      username: formData.get("username"),
       password: formData.get("password"),
     });
 
     await signIn("credentials", {
-      email: validatedData.email,
+      username: validatedData.username,
       password: validatedData.password,
       redirect: false,
     });
 
     return { status: "success" };
   } catch (error) {
+    if (error instanceof AuthError) {
+      return { status: "failed" };
+    }
+
     if (error instanceof z.ZodError) {
       return { status: "invalid_data" };
     }
@@ -57,18 +57,19 @@ export const register = async (
 ): Promise<RegisterActionState> => {
   try {
     const validatedData = authFormSchema.parse({
-      email: formData.get("email"),
+      username: formData.get("username"),
       password: formData.get("password"),
     });
 
-    const [user] = await getUser(validatedData.email);
+    const [existingUser] = await getUserByUsername(validatedData.username);
 
-    if (user) {
-      return { status: "user_exists" } as RegisterActionState;
+    if (existingUser) {
+      return { status: "user_exists" };
     }
-    await createUser(validatedData.email, validatedData.password);
+
+    await createUser(validatedData.username, validatedData.password);
     await signIn("credentials", {
-      email: validatedData.email,
+      username: validatedData.username,
       password: validatedData.password,
       redirect: false,
     });

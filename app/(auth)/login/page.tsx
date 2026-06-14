@@ -12,7 +12,7 @@ import { type LoginActionState, login } from "../actions";
 
 export default function Page() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [isSuccessful, setIsSuccessful] = useState(false);
 
   const [state, formAction] = useActionState<LoginActionState, FormData>(
@@ -25,31 +25,32 @@ export default function Page() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: router and updateSession are stable refs
   useEffect(() => {
     if (state.status === "failed") {
-      toast({ type: "error", description: "Invalid credentials!" });
+      toast({ type: "error", description: "Invalid username or password." });
     } else if (state.status === "invalid_data") {
       toast({
         type: "error",
-        description: "Failed validating your submission!",
+        description: "Check your username and password and try again.",
       });
     } else if (state.status === "success") {
       setIsSuccessful(true);
       updateSession();
+      router.push("/");
       router.refresh();
     }
   }, [state.status]);
 
   const handleSubmit = (formData: FormData) => {
-    setEmail(formData.get("email") as string);
+    setUsername(formData.get("username") as string);
     formAction(formData);
   };
 
   return (
     <>
-      <h1 className="text-2xl font-semibold tracking-tight">Welcome back</h1>
-      <p className="text-sm text-muted-foreground">
-        Sign in to your account to continue
+      <h1 className="font-semibold text-2xl tracking-tight">Sign in</h1>
+      <p className="text-muted-foreground text-sm">
+        Access the TTB label verification tool
       </p>
-      <AuthForm action={handleSubmit} defaultEmail={email}>
+      <AuthForm action={handleSubmit} defaultUsername={username} mode="login">
         <SubmitButton isSuccessful={isSuccessful}>Sign in</SubmitButton>
         <p className="text-center text-[13px] text-muted-foreground">
           {"No account? "}
@@ -57,7 +58,7 @@ export default function Page() {
             className="text-foreground underline-offset-4 hover:underline"
             href="/register"
           >
-            Sign up
+            Create one
           </Link>
         </p>
       </AuthForm>

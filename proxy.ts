@@ -1,6 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
-import { guestRegex, isDevelopmentEnvironment } from "./lib/constants";
+import { isDevelopmentEnvironment } from "./lib/constants";
+
+const publicPages = ["/login", "/register"];
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -13,25 +15,31 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
+  const base = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+
   const token = await getToken({
     req: request,
     secret: process.env.AUTH_SECRET,
     secureCookie: !isDevelopmentEnvironment,
   });
 
-  const base = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+  const isPublicPage = publicPages.includes(pathname);
 
   if (!token) {
-    const redirectUrl = encodeURIComponent(new URL(request.url).pathname);
+    if (isPublicPage) {
+      return NextResponse.next();
+    }
 
-    return NextResponse.redirect(
-      new URL(`${base}/api/auth/guest?redirectUrl=${redirectUrl}`, request.url)
+    const loginUrl = new URL(`${base}/login`, request.url);
+    loginUrl.searchParams.set(
+      "callbackUrl",
+      encodeURIComponent(pathname === "/" ? "/" : pathname)
     );
+
+    return NextResponse.redirect(loginUrl);
   }
 
-  const isGuest = guestRegex.test(token?.email ?? "");
-
-  if (token && !isGuest && ["/login", "/register"].includes(pathname)) {
+  if (isPublicPage) {
     return NextResponse.redirect(new URL(`${base}/`, request.url));
   }
 
@@ -41,7 +49,6 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     "/",
-    "/chat/:id",
     "/api/:path*",
     "/login",
     "/register",

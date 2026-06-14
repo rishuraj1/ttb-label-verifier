@@ -11,7 +11,7 @@ import { type RegisterActionState, register } from "../actions";
 
 export default function Page() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [isSuccessful, setIsSuccessful] = useState(false);
 
   const [state, formAction] = useActionState<RegisterActionState, FormData>(
@@ -24,33 +24,36 @@ export default function Page() {
   // biome-ignore lint/correctness/useExhaustiveDependencies: router and updateSession are stable refs
   useEffect(() => {
     if (state.status === "user_exists") {
-      toast({ type: "error", description: "Account already exists!" });
+      toast({ type: "error", description: "That username is already taken." });
     } else if (state.status === "failed") {
-      toast({ type: "error", description: "Failed to create account!" });
+      toast({ type: "error", description: "Failed to create account." });
     } else if (state.status === "invalid_data") {
       toast({
         type: "error",
-        description: "Failed validating your submission!",
+        description: "Username must be 3–32 characters; password at least 8.",
       });
     } else if (state.status === "success") {
       toast({ type: "success", description: "Account created!" });
       setIsSuccessful(true);
       updateSession();
+      router.push("/");
       router.refresh();
     }
   }, [state.status]);
 
   const handleSubmit = (formData: FormData) => {
-    setEmail(formData.get("email") as string);
+    setUsername(formData.get("username") as string);
     formAction(formData);
   };
 
   return (
     <>
-      <h1 className="text-2xl font-semibold tracking-tight">Create account</h1>
-      <p className="text-sm text-muted-foreground">Get started for free</p>
-      <AuthForm action={handleSubmit} defaultEmail={email}>
-        <SubmitButton isSuccessful={isSuccessful}>Sign up</SubmitButton>
+      <h1 className="font-semibold text-2xl tracking-tight">Create account</h1>
+      <p className="text-muted-foreground text-sm">
+        Register to verify alcohol beverage labels
+      </p>
+      <AuthForm action={handleSubmit} defaultUsername={username} mode="register">
+        <SubmitButton isSuccessful={isSuccessful}>Create account</SubmitButton>
         <p className="text-center text-[13px] text-muted-foreground">
           {"Have an account? "}
           <Link

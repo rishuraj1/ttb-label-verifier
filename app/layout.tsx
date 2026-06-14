@@ -8,8 +8,9 @@ import { SessionProvider } from "next-auth/react";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://chat.vercel.ai"),
-  title: "Next.js Chatbot Template",
-  description: "Next.js chatbot template using the AI SDK.",
+  title: "TTB Label Verifier",
+  description:
+    "Verify alcohol beverage labels against TTB application fields using Claude vision.",
 };
 
 export const viewport = {
