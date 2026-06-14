@@ -8,6 +8,7 @@ import {
 } from "./constants";
 import { verifyLabelImage } from "./verify-label";
 import type { ApplicationFields, BatchItemResult } from "./types";
+export { computeBatchSummary } from "./batch-summary";
 
 const IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"] as const;
 

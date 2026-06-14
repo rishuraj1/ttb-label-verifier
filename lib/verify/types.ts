@@ -85,13 +85,41 @@ export const batchItemResultSchema = verifyResponseSchema.extend({
 
 export type BatchItemResult = z.infer<typeof batchItemResultSchema>;
 
+export const batchFailureReasonSchema = z.object({
+  field: verifiableFieldKeySchema,
+  count: z.number(),
+  filenames: z.array(z.string()),
+});
+
+export type BatchFailureReason = z.infer<typeof batchFailureReasonSchema>;
+
+export const batchSmartSummarySchema = z.object({
+  passCount: z.number(),
+  failCount: z.number(),
+  reviewCount: z.number(),
+  errorCount: z.number(),
+  topFailureReasons: z.array(batchFailureReasonSchema),
+});
+
+export type BatchSmartSummary = z.infer<typeof batchSmartSummarySchema>;
+
 export const batchVerifyResponseSchema = z.object({
   total: z.number(),
   completed: z.number(),
   items: z.array(batchItemResultSchema),
+  summary: batchSmartSummarySchema,
 });
 
 export type BatchVerifyResponse = z.infer<typeof batchVerifyResponseSchema>;
+
+// Client-side override types — not persisted server-side
+export type FieldOverride = {
+  status: FieldStatus;
+  reason: string;
+  overriddenAt: string;
+};
+
+export type OverrideMap = Partial<Record<VerifiableFieldKey, FieldOverride>>;
 
 export const aiFieldExtractionSchema = z.object({
   field: verifiableFieldKeySchema,
@@ -106,6 +134,7 @@ export const aiVerificationSchema = z.object({
 });
 
 export type AiVerification = z.infer<typeof aiVerificationSchema>;
+export type AiFieldExtraction = z.infer<typeof aiFieldExtractionSchema>;
 
 export const FIELD_LABELS: Record<VerifiableFieldKey, string> = {
   brandName: "Brand Name",

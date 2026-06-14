@@ -1,5 +1,6 @@
 import { auth } from "@/app/(auth)/auth";
 import {
+  computeBatchSummary,
   extractImagesFromZip,
   runBatchVerification,
 } from "@/lib/verify/batch";
@@ -28,6 +29,7 @@ export async function POST(request: Request) {
       total: items.length,
       completed: items.length,
       items,
+      summary: computeBatchSummary(items),
     };
 
     return Response.json(response);

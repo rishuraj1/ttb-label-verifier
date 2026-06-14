@@ -17,6 +17,7 @@ import {
   BATCH_CONCURRENCY,
   MAX_BATCH_IMAGES,
 } from "@/lib/verify/constants";
+import { computeBatchSummary } from "@/lib/verify/batch-summary";
 import type {
   BatchItemResult,
   BatchVerifyResponse,
@@ -176,6 +177,7 @@ export function BatchForm() {
         total: items.length,
         completed: items.length,
         items,
+        summary: computeBatchSummary(items),
       });
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (error) {
