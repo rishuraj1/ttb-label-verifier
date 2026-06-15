@@ -9,6 +9,7 @@ import {
   type OverrideMap,
 } from "@/lib/verify/types";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { ExportJsonButton } from "@/components/verify/export-json-button";
 import { VerificationResults } from "@/components/verify/verification-results";
 import { OverallResultBadge } from "@/components/verify/status-badge";
@@ -36,7 +37,19 @@ function exportBatchCsv(
 
   for (const item of response.items) {
     if (item.error) {
-      rows.push([item.filename, "ERROR", "", "", "", "", item.error, "", "", "", ""]);
+      rows.push([
+        item.filename,
+        "ERROR",
+        "",
+        "",
+        "",
+        "",
+        item.error,
+        "",
+        "",
+        "",
+        "",
+      ]);
       continue;
     }
     const itemOverrides = overridesPerFile[item.filename] ?? {};
@@ -73,18 +86,45 @@ function exportBatchCsv(
   URL.revokeObjectURL(url);
 }
 
-function SmartSummaryCard({ response }: { response: BatchVerifyResponse }) {
+function SmartSummaryCard({
+  response,
+  isProcessing,
+}: {
+  response: BatchVerifyResponse;
+  isProcessing: boolean;
+}) {
   const { summary } = response;
   const hasFailures = summary.failCount > 0;
 
   return (
-    <div className="rounded-xl border border-border bg-card p-6">
+    <div className="flex-1 rounded-xl border border-border bg-card p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <p className="text-muted-foreground text-sm">Batch summary</p>
+          <div className="flex items-center gap-2">
+            <p className="text-muted-foreground text-sm">Batch summary</p>
+            {isProcessing ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-muted-foreground text-xs">
+                <Spinner className="size-3" />
+                Processing…
+              </span>
+            ) : null}
+          </div>
           <p className="mt-1 font-semibold text-xl">
             {response.completed} of {response.total} labels processed
           </p>
+
+          {/* Progress bar while processing */}
+          {isProcessing && response.total > 0 ? (
+            <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-primary transition-all duration-500"
+                style={{
+                  width: `${Math.round((response.completed / response.total) * 100)}%`,
+                }}
+              />
+            </div>
+          ) : null}
+
           <p className="mt-2 text-sm">
             <span className="text-emerald-700 dark:text-emerald-400">
               {summary.passCount} passed
@@ -100,7 +140,9 @@ function SmartSummaryCard({ response }: { response: BatchVerifyResponse }) {
             {summary.failCount > 0 ? (
               <>
                 {" · "}
-                <span className="text-destructive">{summary.failCount} failed</span>
+                <span className="text-destructive">
+                  {summary.failCount} failed
+                </span>
               </>
             ) : null}
             {summary.errorCount > 0 ? (
@@ -138,7 +180,7 @@ function SmartSummaryCard({ response }: { response: BatchVerifyResponse }) {
                 </div>
               ))}
             </div>
-          ) : !hasFailures ? (
+          ) : !hasFailures && !isProcessing ? (
             <p className="mt-3 font-medium text-emerald-700 text-sm dark:text-emerald-400">
               All labels passed verification ✓
             </p>
@@ -191,50 +233,65 @@ function BatchItemCard({
 
 export function BatchResults({
   response,
+  isProcessing = false,
   className,
 }: {
   response: BatchVerifyResponse;
+  isProcessing?: boolean;
   className?: string;
 }) {
   const [overridesPerFile, setOverridesPerFile] = useState<
     Record<string, OverrideMap>
   >({});
 
-  const handleOverridesChange = (filename: string) => (overrides: OverrideMap) => {
-    setOverridesPerFile((prev) => ({ ...prev, [filename]: overrides }));
-  };
+  const handleOverridesChange =
+    (filename: string) => (overrides: OverrideMap) => {
+      setOverridesPerFile((prev) => ({ ...prev, [filename]: overrides }));
+    };
 
   return (
     <section className={cn("space-y-6", className)}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <SmartSummaryCard response={response} />
-        <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-start">
-          <ExportJsonButton
-            data={response}
-            filename="ttb-batch-verification.json"
-          />
-          <Button
-            onClick={() => exportBatchCsv(response, overridesPerFile)}
-            size="sm"
-            type="button"
-            variant="outline"
-          >
-            <DownloadIcon aria-hidden="true" />
-            Export CSV
-          </Button>
-        </div>
+      <div className="flex flex-wrap items-start gap-3">
+        <SmartSummaryCard isProcessing={isProcessing} response={response} />
+
+        {!isProcessing ? (
+          <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-start">
+            <ExportJsonButton
+              data={response}
+              filename="ttb-batch-verification.json"
+            />
+            <Button
+              onClick={() => exportBatchCsv(response, overridesPerFile)}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              <DownloadIcon aria-hidden="true" />
+              Export CSV
+            </Button>
+          </div>
+        ) : null}
       </div>
 
-      <div className="grid gap-3">
-        {response.items.map((item) => (
-          <BatchItemCard
-            item={item}
-            key={item.filename}
-            onOverridesChange={handleOverridesChange(item.filename)}
-            overrides={overridesPerFile[item.filename] ?? {}}
-          />
-        ))}
-      </div>
+      {response.items.length > 0 ? (
+        <div className="grid gap-3">
+          {response.items.map((item) => (
+            <BatchItemCard
+              item={item}
+              key={item.filename}
+              onOverridesChange={handleOverridesChange(item.filename)}
+              overrides={overridesPerFile[item.filename] ?? {}}
+            />
+          ))}
+
+          {isProcessing ? (
+            <div className="flex items-center gap-3 rounded-xl border border-dashed border-border bg-muted/10 p-4 text-muted-foreground text-sm">
+              <Spinner className="size-4 shrink-0" />
+              Verifying remaining labels…
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }

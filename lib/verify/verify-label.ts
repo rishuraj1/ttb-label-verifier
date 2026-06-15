@@ -6,6 +6,7 @@ import {
   buildVerificationPrompt,
   REJECTION_SYSTEM_PROMPT,
 } from "./prompts";
+import { createLogger } from "./logger";
 import { getVerificationModel } from "./provider";
 import { refineVerificationResults } from "./refine-results";
 import { computeOverallResult } from "./scoring";
@@ -16,6 +17,8 @@ import {
   type VerificationResult,
   type VerifyResponse,
 } from "./types";
+
+const log = createLogger("verify-label");
 
 export type VerifyLabelOptions = {
   mimeType?: string | null;
@@ -46,11 +49,22 @@ export async function verifyLabelImage(
   options?: VerifyLabelOptions
 ): Promise<VerifyLabelResponse> {
   const start = Date.now();
+  const filename = options?.filename ?? "unknown";
+
+  log.info("verification started", {
+    filename,
+    imageSizeBytes: imageBuffer.length,
+    brandName: fields.brandName,
+    beverageType: fields.beverageType,
+  });
+
   const { buffer, mimeType } = await preprocessLabelImage(
     imageBuffer,
     options?.mimeType,
     options?.filename
   );
+
+  log.debug("image preprocessed", { filename, mimeType, processedSizeBytes: buffer.length });
 
   const model = getVerificationModel();
   const messages = [
@@ -90,6 +104,15 @@ export async function verifyLabelImage(
         };
         const [refined] = refineVerificationResults([merged]);
         results.push(refined);
+
+        log.debug("field complete", {
+          filename,
+          field: refined.field,
+          status: refined.status,
+          confidence: refined.confidence,
+          extracted: refined.extracted,
+        });
+
         await options?.onFieldComplete?.(refined);
       }
     }
@@ -102,6 +125,13 @@ export async function verifyLabelImage(
     if (!results.some((r) => r.field === item.field)) {
       const [refined] = refineVerificationResults([item]);
       results.push(refined);
+
+      log.debug("field filled (ai omitted)", {
+        filename,
+        field: refined.field,
+        status: refined.status,
+      });
+
       await options?.onFieldComplete?.(refined);
     }
   }
@@ -110,6 +140,7 @@ export async function verifyLabelImage(
   let rejectionDraft: string | null = null;
 
   if (overall === "FAIL") {
+    log.info("generating rejection draft", { filename, failedCount: results.filter(r => r.status === "fail").length });
     const failedResults = results.filter((result) => result.status === "fail");
     const { text } = await generateText({
       model,
@@ -117,12 +148,26 @@ export async function verifyLabelImage(
       prompt: buildRejectionPrompt(failedResults),
     });
     rejectionDraft = text;
+    log.debug("rejection draft generated", { filename, draftLength: text.length });
   }
+
+  const processingTimeMs = Date.now() - start;
+
+  log.info("verification complete", {
+    filename,
+    overall,
+    processingTimeMs,
+    fieldCount: results.length,
+    passCount: results.filter(r => r.status === "pass").length,
+    failCount: results.filter(r => r.status === "fail").length,
+    warnCount: results.filter(r => r.status === "warn").length,
+    reviewCount: results.filter(r => r.status === "review").length,
+  });
 
   return {
     overall,
     results,
     rejectionDraft,
-    processingTimeMs: Date.now() - start,
+    processingTimeMs,
   };
 }

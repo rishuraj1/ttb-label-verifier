@@ -2,7 +2,7 @@
 
 import JSZip from "jszip";
 import { FileArchiveIcon } from "lucide-react";
-import { type FormEvent, useRef, useState } from "react";
+import { type DragEvent, type FormEvent, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   appendApplicationFields,
@@ -29,7 +29,7 @@ const IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"];
 
 function isImageFilename(filename: string): boolean {
   const lower = filename.toLowerCase();
-  return IMAGE_EXTENSIONS.some((extension) => lower.endsWith(extension));
+  return IMAGE_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
 
 async function extractImagesFromClientZip(
@@ -111,11 +111,56 @@ export function BatchForm() {
   const [archiveFile, setArchiveFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
+  const [streamingItems, setStreamingItems] = useState<BatchItemResult[]>([]);
   const [response, setResponse] = useState<BatchVerifyResponse | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const handleFieldChange = (id: ApplicationFormFieldId, value: string) => {
     setFormValues((current) => ({ ...current, [id]: value }));
   };
+
+  const handleArchiveChange = (file: File | null) => {
+    setArchiveFile(file);
+    setResponse(null);
+    setStreamingItems([]);
+  };
+
+  // ── drag & drop ──────────────────────────────────────────────────────────
+
+  const handleDragOver = (e: DragEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: DragEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: DragEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+
+    const isZip =
+      file.type === "application/zip" ||
+      file.type === "application/x-zip-compressed" ||
+      file.name.toLowerCase().endsWith(".zip");
+
+    if (!isZip) {
+      toast.error("Please upload a ZIP archive");
+      return;
+    }
+
+    handleArchiveChange(file);
+  };
+
+  // ── submission ───────────────────────────────────────────────────────────
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -127,16 +172,21 @@ export function BatchForm() {
 
     setIsSubmitting(true);
     setResponse(null);
+    setStreamingItems([]);
 
     try {
       const images = await extractImagesFromClientZip(archiveFile);
 
       if (images.length === 0) {
-        throw new Error("ZIP archive must contain JPEG, PNG, or WebP label images");
+        throw new Error(
+          "ZIP archive must contain JPEG, PNG, or WebP label images"
+        );
       }
 
       if (images.length > MAX_BATCH_IMAGES) {
-        throw new Error(`ZIP archive may contain at most ${MAX_BATCH_IMAGES} images`);
+        throw new Error(
+          `ZIP archive may contain at most ${MAX_BATCH_IMAGES} images`
+        );
       }
 
       setProgress({ completed: 0, total: images.length });
@@ -147,38 +197,42 @@ export function BatchForm() {
         images,
         BATCH_CONCURRENCY,
         async (image): Promise<BatchItemResult> => {
+          let item: BatchItemResult;
+
           try {
             const result = await verifySingleImage(image.file, formValues);
-            completed += 1;
-            setProgress({ completed, total: images.length });
-
-            return {
-              filename: image.filename,
-              ...result,
-              error: null,
-            };
+            item = { filename: image.filename, ...result, error: null };
           } catch (error) {
-            completed += 1;
-            setProgress({ completed, total: images.length });
-
-            return {
+            item = {
               filename: image.filename,
               overall: "FAIL",
               results: [],
               rejectionDraft: null,
               error:
-                error instanceof Error ? error.message : "Verification failed",
+                error instanceof Error
+                  ? error.message
+                  : "Verification failed",
             };
           }
+
+          completed += 1;
+          setProgress({ completed, total: images.length });
+
+          // Stream result immediately — don't wait for the full batch
+          setStreamingItems((prev) => [...prev, item]);
+
+          return item;
         }
       );
 
+      // Replace streaming state with the authoritative final response
       setResponse({
         total: items.length,
         completed: items.length,
         items,
         summary: computeBatchSummary(items),
       });
+      setStreamingItems([]);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (error) {
       toast.error(
@@ -190,20 +244,39 @@ export function BatchForm() {
     }
   };
 
+  // ── derive display response (partial during processing) ──────────────────
+
+  const displayResponse: BatchVerifyResponse | null =
+    response ??
+    (streamingItems.length > 0
+      ? {
+          total: progress.total || streamingItems.length,
+          completed: streamingItems.length,
+          items: streamingItems,
+          summary: computeBatchSummary(streamingItems),
+        }
+      : null);
+
   return (
     <div className="space-y-8">
-      {response ? <BatchResults response={response} /> : null}
+      {displayResponse ? (
+        <BatchResults isProcessing={isSubmitting} response={displayResponse} />
+      ) : null}
 
-      <form className="space-y-8" onSubmit={handleSubmit}>
+      <form className="space-y-4" onSubmit={handleSubmit}>
         <section className="rounded-xl border border-border bg-card p-6">
           <h2 className="mb-4 font-medium text-lg">ZIP archive</h2>
 
           <button
             className={cn(
               "flex w-full cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-border bg-muted/30 px-6 py-10 transition-colors hover:bg-muted/50",
-              archiveFile && "border-solid py-6"
+              archiveFile && "border-solid py-6",
+              isDragging && "border-primary bg-primary/5"
             )}
             onClick={() => fileInputRef.current?.click()}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
@@ -214,14 +287,24 @@ export function BatchForm() {
           >
             <FileArchiveIcon
               aria-hidden="true"
-              className="size-8 text-muted-foreground"
+              className={cn(
+                "size-8",
+                isDragging ? "text-primary" : "text-muted-foreground"
+              )}
             />
-            {archiveFile ? (
+            {isDragging ? (
+              <span className="font-medium text-primary text-sm">
+                Drop ZIP archive here
+              </span>
+            ) : archiveFile ? (
               <span className="font-medium text-sm">{archiveFile.name}</span>
             ) : (
-              <span className="text-muted-foreground text-sm">
-                Click to upload a ZIP of label images (up to {MAX_BATCH_IMAGES}{" "}
-                JPEG, PNG, or WebP files)
+              <span className="text-center text-muted-foreground text-sm">
+                Drag &amp; drop or click to upload a ZIP archive
+                <br />
+                <span className="text-xs">
+                  Up to {MAX_BATCH_IMAGES} JPEG, PNG, or WebP images
+                </span>
               </span>
             )}
           </button>
@@ -230,7 +313,7 @@ export function BatchForm() {
             accept=".zip,application/zip,application/x-zip-compressed"
             className="sr-only"
             onChange={(event) => {
-              setArchiveFile(event.target.files?.[0] ?? null);
+              handleArchiveChange(event.target.files?.[0] ?? null);
             }}
             ref={fileInputRef}
             type="file"
@@ -255,7 +338,10 @@ export function BatchForm() {
 
           {response ? (
             <Button
-              onClick={() => setResponse(null)}
+              onClick={() => {
+                setResponse(null);
+                setStreamingItems([]);
+              }}
               size="lg"
               type="button"
               variant="outline"

@@ -145,3 +145,32 @@ export const FIELD_LABELS: Record<VerifiableFieldKey, string> = {
   beverageType: "Beverage Type",
   governmentWarning: "Government Warning",
 };
+
+// Display order for all 7 verifiable fields (core → important → optional)
+export const FIELD_ORDER: VerifiableFieldKey[] = [
+  "brandName",
+  "alcoholContent",
+  "governmentWarning",
+  "classType",
+  "netContents",
+  "producerName",
+  "beverageType",
+];
+
+export const FIELD_PRIORITY_GROUPS: Record<
+  "core" | "important" | "optional",
+  { label: string; fields: VerifiableFieldKey[] }
+> = {
+  core: {
+    label: "Core Fields",
+    fields: ["brandName", "alcoholContent", "governmentWarning"],
+  },
+  important: {
+    label: "Important Fields",
+    fields: ["classType", "netContents", "producerName"],
+  },
+  optional: {
+    label: "Optional Fields",
+    fields: ["beverageType"],
+  },
+};

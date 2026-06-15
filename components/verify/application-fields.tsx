@@ -4,28 +4,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 export const APPLICATION_FORM_FIELDS = [
-  { id: "brandName", label: "Brand Name", placeholder: "Old Forester" },
-  {
-    id: "classType",
-    label: "Class / Type",
-    placeholder: "Kentucky Straight Bourbon Whisky",
-  },
-  {
-    id: "alcoholContent",
-    label: "Alcohol Content",
-    placeholder: "43% ALC./VOL. (86 PROOF)",
-  },
-  { id: "netContents", label: "Net Contents", placeholder: "750 mL" },
-  {
-    id: "producerName",
-    label: "Producer / Bottler",
-    placeholder: "Brown-Forman Distillery, Louisville, KY",
-  },
-  {
-    id: "beverageType",
-    label: "Beverage Type",
-    placeholder: "Distilled Spirits",
-  },
+  { id: "brandName",      label: "Brand Name",        placeholder: "Old Forester",                              priority: "core"      },
+  { id: "alcoholContent", label: "Alcohol Content",   placeholder: "43% ALC./VOL. (86 PROOF)",                 priority: "core"      },
+  { id: "classType",      label: "Class / Type",      placeholder: "Kentucky Straight Bourbon Whisky",          priority: "important" },
+  { id: "netContents",    label: "Net Contents",      placeholder: "750 mL",                                    priority: "important" },
+  { id: "producerName",   label: "Producer / Bottler",placeholder: "Brown-Forman Distillery, Louisville, KY",  priority: "important" },
+  { id: "beverageType",   label: "Beverage Type",     placeholder: "Distilled Spirits",                         priority: "optional"  },
 ] as const;
 
 export type ApplicationFormFieldId =
@@ -41,6 +25,55 @@ export const emptyApplicationFormState: Record<ApplicationFormFieldId, string> =
     beverageType: "",
   };
 
+const GROUPS: {
+  key: "core" | "important" | "optional";
+  label: string;
+  description: string;
+}[] = [
+  {
+    key: "core",
+    label: "Core Fields",
+    description: "Required for every COLA submission",
+  },
+  {
+    key: "important",
+    label: "Important Fields",
+    description: "Key label information verified against your application",
+  },
+  {
+    key: "optional",
+    label: "Optional Fields",
+    description: "Supplementary information",
+  },
+];
+
+function FieldInput({
+  field,
+  value,
+  onChange,
+  idPrefix,
+}: {
+  field: (typeof APPLICATION_FORM_FIELDS)[number];
+  value: string;
+  onChange: (id: ApplicationFormFieldId, value: string) => void;
+  idPrefix: string;
+}) {
+  const fieldId = `${idPrefix}${field.id}`;
+  return (
+    <div className="grid gap-2">
+      <Label htmlFor={fieldId}>{field.label}</Label>
+      <Input
+        id={fieldId}
+        name={field.id}
+        onChange={(e) => onChange(field.id, e.target.value)}
+        placeholder={field.placeholder}
+        required
+        value={value}
+      />
+    </div>
+  );
+}
+
 export function ApplicationFieldsSection({
   values,
   onChange,
@@ -51,34 +84,46 @@ export function ApplicationFieldsSection({
   idPrefix?: string;
 }) {
   return (
-    <section className="rounded-xl border border-border bg-card p-6">
-      <h2 className="mb-4 font-medium text-lg">Application fields</h2>
+    <div className="space-y-4">
+      {GROUPS.map((group) => {
+        const groupFields = APPLICATION_FORM_FIELDS.filter(
+          (f) => f.priority === group.key
+        );
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        {APPLICATION_FORM_FIELDS.map((field) => {
-          const fieldId = `${idPrefix}${field.id}`;
-
-          return (
-            <div className="grid gap-2" key={field.id}>
-              <Label htmlFor={fieldId}>{field.label}</Label>
-              <Input
-                id={fieldId}
-                name={field.id}
-                onChange={(event) => onChange(field.id, event.target.value)}
-                placeholder={field.placeholder}
-                required
-                value={values[field.id]}
-              />
+        return (
+          <section
+            className="rounded-xl border border-border bg-card p-6"
+            key={group.key}
+          >
+            <div className="mb-4">
+              <h2 className="font-medium text-base">{group.label}</h2>
+              <p className="mt-0.5 text-muted-foreground text-xs">
+                {group.description}
+              </p>
             </div>
-          );
-        })}
-      </div>
 
-      <p className="mt-4 text-muted-foreground text-xs leading-relaxed">
-        The TTB government warning is verified automatically against the
-        mandated Surgeon General statement — it is not entered here.
-      </p>
-    </section>
+            <div className="grid gap-4 sm:grid-cols-2">
+              {groupFields.map((field) => (
+                <FieldInput
+                  field={field}
+                  idPrefix={idPrefix}
+                  key={field.id}
+                  onChange={onChange}
+                  value={values[field.id]}
+                />
+              ))}
+            </div>
+
+            {group.key === "optional" ? (
+              <p className="mt-4 text-muted-foreground text-xs leading-relaxed">
+                The TTB government warning is verified automatically against the
+                mandated Surgeon General statement — it is not entered here.
+              </p>
+            ) : null}
+          </section>
+        );
+      })}
+    </div>
   );
 }
 

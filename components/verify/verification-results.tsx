@@ -1,9 +1,21 @@
 "use client";
 
-import { CopyIcon, CheckIcon, PencilIcon, XIcon } from "lucide-react";
+import {
+  CopyIcon,
+  CheckIcon,
+  PencilIcon,
+  XIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  DownloadIcon,
+  RefreshCwIcon,
+  UploadIcon,
+} from "lucide-react";
 import { useState } from "react";
 import {
   FIELD_LABELS,
+  FIELD_ORDER,
+  FIELD_PRIORITY_GROUPS,
   type FieldOverride,
   type FieldStatus,
   type OverrideMap,
@@ -13,6 +25,7 @@ import {
 } from "@/lib/verify/types";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Spinner } from "@/components/ui/spinner";
 import { ExportJsonButton } from "@/components/verify/export-json-button";
 import {
   FieldStatusBadge,
@@ -28,6 +41,10 @@ import {
 import { cn } from "@/lib/utils";
 import type { OverallResult } from "@/lib/verify/types";
 
+const TOTAL_FIELDS = FIELD_ORDER.length; // 7
+
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
 function computeEffectiveOverall(
   results: VerificationResult[],
   overrides: OverrideMap
@@ -38,6 +55,74 @@ function computeEffectiveOverall(
     return "REVIEW";
   return "PASS";
 }
+
+function avgConfidence(results: VerificationResult[]): number {
+  if (results.length === 0) return 0;
+  return results.reduce((sum, r) => sum + r.confidence, 0) / results.length;
+}
+
+function confidenceGuidance(
+  confidence: number,
+  status: FieldStatus
+): { label: string; className: string } | null {
+  if (status === "pass" && confidence >= 0.75) return null;
+  if (confidence < 0.5)
+    return {
+      label: "Review Required",
+      className: "text-destructive",
+    };
+  if (confidence < 0.75)
+    return {
+      label: "Verify Manually",
+      className: "text-amber-600 dark:text-amber-400",
+    };
+  return null;
+}
+
+function exportVerificationCsv(
+  response: VerifyResponse,
+  overrides: OverrideMap
+) {
+  const headers = [
+    "field",
+    "expected",
+    "on_label",
+    "ai_status",
+    "confidence_pct",
+    "override_status",
+    "override_reason",
+    "effective_status",
+    "explanation",
+  ];
+  const rows = response.results.map((r) => {
+    const ov = overrides[r.field];
+    return [
+      FIELD_LABELS[r.field],
+      r.expected,
+      r.extracted ?? "",
+      r.status,
+      String(Math.round(r.confidence * 100)),
+      ov?.status ?? "",
+      ov?.reason ?? "",
+      ov?.status ?? r.status,
+      r.explanation,
+    ];
+  });
+  const csv = [headers, ...rows]
+    .map((row) =>
+      row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")
+    )
+    .join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "ttb-label-verification.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ─── sub-components ───────────────────────────────────────────────────────────
 
 function ConfidenceBar({
   confidence,
@@ -60,12 +145,26 @@ function ConfidenceBar({
   return (
     <div
       aria-hidden="true"
-      className="mt-3 h-1 w-full overflow-hidden rounded-full bg-muted"
+      className="h-1 w-full overflow-hidden rounded-full bg-muted"
     >
       <div
         className={cn("h-full rounded-full transition-all", barColor)}
         style={{ width: `${Math.round(confidence * 100)}%` }}
       />
+    </div>
+  );
+}
+
+function PendingFieldCard({ field }: { field: VerifiableFieldKey }) {
+  return (
+    <div className="rounded-xl border border-dashed border-border bg-muted/10 p-4">
+      <div className="flex items-center gap-2">
+        <span className="font-medium text-muted-foreground text-sm">
+          {FIELD_LABELS[field]}
+        </span>
+        <Spinner className="size-3 text-muted-foreground" />
+      </div>
+      <p className="mt-1 text-muted-foreground text-xs">Analyzing…</p>
     </div>
   );
 }
@@ -87,11 +186,6 @@ function OverrideForm({
     currentOverride?.status ?? "pass"
   );
   const [reason, setReason] = useState(currentOverride?.reason ?? "");
-
-  const handleApply = () => {
-    if (!reason.trim()) return;
-    onApply({ status, reason: reason.trim(), overriddenAt: new Date().toISOString() });
-  };
 
   return (
     <div className="mt-3 space-y-3 rounded-lg border border-amber-400/40 bg-amber-50/50 p-3 dark:bg-amber-950/20">
@@ -131,7 +225,14 @@ function OverrideForm({
         <Button
           className="h-7 text-xs"
           disabled={!reason.trim()}
-          onClick={handleApply}
+          onClick={() => {
+            if (!reason.trim()) return;
+            onApply({
+              status,
+              reason: reason.trim(),
+              overriddenAt: new Date().toISOString(),
+            });
+          }}
           size="sm"
           type="button"
         >
@@ -169,25 +270,33 @@ function ResultRow({
 }: {
   result: VerificationResult;
   override: FieldOverride | undefined;
-  onOverride: (field: VerifiableFieldKey, override: FieldOverride | null) => void;
+  onOverride: (
+    field: VerifiableFieldKey,
+    override: FieldOverride | null
+  ) => void;
 }) {
   const [showForm, setShowForm] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const effectiveStatus = override?.status ?? result.status;
   const isOverridden = !!override;
+
+  const guidance = confidenceGuidance(result.confidence, effectiveStatus);
+  const isLongExplanation = result.explanation.length > 160;
 
   return (
     <div
       className={cn(
-        "rounded-xl border bg-card p-4 animate-in fade-in slide-in-from-bottom-2 duration-300",
+        "rounded-xl border bg-card animate-in fade-in slide-in-from-bottom-2 duration-300",
         isOverridden ? "border-amber-400/60" : "border-border"
       )}
     >
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+      {/* Header row */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3">
         <div className="flex items-center gap-2">
-          <h3 className="font-medium">{FIELD_LABELS[result.field]}</h3>
+          <h3 className="font-medium text-sm">{FIELD_LABELS[result.field]}</h3>
           {isOverridden ? (
             <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-amber-800 text-xs dark:bg-amber-900/40 dark:text-amber-300">
-              Agent override
+              Overridden
             </span>
           ) : null}
         </div>
@@ -201,42 +310,88 @@ function ResultRow({
         </div>
       </div>
 
-      <dl className="grid gap-2 text-sm">
-        <div className="grid gap-1 sm:grid-cols-[120px_1fr]">
-          <dt className="text-muted-foreground">Expected</dt>
-          <dd className="break-words">{result.expected}</dd>
-        </div>
-        <div className="grid gap-1 sm:grid-cols-[120px_1fr]">
-          <dt className="text-muted-foreground">On label</dt>
-          <dd className="break-words font-mono text-sm">
-            {result.extracted ?? (
-              <span className="font-sans text-muted-foreground italic">
-                Not detected
-              </span>
-            )}
-          </dd>
-        </div>
-        <div className="grid gap-1 sm:grid-cols-[120px_1fr]">
-          <dt className="text-muted-foreground">Confidence</dt>
-          <dd>{Math.round(result.confidence * 100)}%</dd>
-        </div>
-        {isOverridden ? (
+      {/* Values */}
+      <div className="px-4 pt-3">
+        <dl className="grid gap-2 text-sm">
           <div className="grid gap-1 sm:grid-cols-[120px_1fr]">
-            <dt className="text-muted-foreground">Override reason</dt>
-            <dd className="break-words text-amber-800 dark:text-amber-300">
-              {override.reason}
+            <dt className="text-muted-foreground text-xs">Expected</dt>
+            <dd className="break-words text-sm">{result.expected}</dd>
+          </div>
+          <div className="grid gap-1 sm:grid-cols-[120px_1fr]">
+            <dt className="text-muted-foreground text-xs">Detected</dt>
+            <dd className="break-words font-mono text-sm">
+              {result.extracted ?? (
+                <span className="font-sans text-muted-foreground italic">
+                  Not detected
+                </span>
+              )}
             </dd>
           </div>
+          <div className="grid gap-1 sm:grid-cols-[120px_1fr]">
+            <dt className="text-muted-foreground text-xs">Confidence</dt>
+            <dd className="flex items-center gap-2">
+              <span className="text-sm">
+                {Math.round(result.confidence * 100)}%
+              </span>
+              {guidance ? (
+                <span className={cn("text-xs", guidance.className)}>
+                  — {guidance.label}
+                </span>
+              ) : null}
+            </dd>
+          </div>
+          {isOverridden ? (
+            <div className="grid gap-1 sm:grid-cols-[120px_1fr]">
+              <dt className="text-muted-foreground text-xs">Override reason</dt>
+              <dd className="break-words text-amber-800 text-sm dark:text-amber-300">
+                {override.reason}
+              </dd>
+            </div>
+          ) : null}
+        </dl>
+
+        <ConfidenceBar
+          confidence={result.confidence}
+          status={effectiveStatus}
+        />
+      </div>
+
+      {/* Reasoning */}
+      <div className="px-4 pb-1 pt-3">
+        <p className="text-muted-foreground text-xs uppercase tracking-wide">
+          Reasoning
+        </p>
+        <p
+          className={cn(
+            "mt-1 text-sm leading-relaxed",
+            !expanded && isLongExplanation && "line-clamp-3"
+          )}
+        >
+          {result.explanation}
+        </p>
+        {isLongExplanation ? (
+          <button
+            className="mt-1 flex items-center gap-1 text-muted-foreground text-xs hover:text-foreground"
+            onClick={() => setExpanded((v) => !v)}
+            type="button"
+          >
+            {expanded ? (
+              <>
+                <ChevronUpIcon className="size-3" />
+                Show less
+              </>
+            ) : (
+              <>
+                <ChevronDownIcon className="size-3" />
+                Show more
+              </>
+            )}
+          </button>
         ) : null}
-      </dl>
+      </div>
 
-      <p className="mt-3 text-muted-foreground text-sm leading-relaxed">
-        {result.explanation}
-      </p>
-
-      <ConfidenceBar confidence={result.confidence} status={effectiveStatus} />
-
-      <div className="mt-3 flex justify-end">
+      {/* Actions */}
+      <div className="flex justify-end px-4 pb-3 pt-1">
         {showForm ? (
           <button
             aria-label="Cancel override"
@@ -261,20 +416,109 @@ function ResultRow({
       </div>
 
       {showForm ? (
-        <OverrideForm
-          currentOverride={override}
-          field={result.field}
-          onApply={(ov) => {
-            onOverride(result.field, ov);
-            setShowForm(false);
-          }}
-          onCancel={() => setShowForm(false)}
-          onClear={() => {
-            onOverride(result.field, null);
-            setShowForm(false);
-          }}
-        />
+        <div className="px-4 pb-4">
+          <OverrideForm
+            currentOverride={override}
+            field={result.field}
+            onApply={(ov) => {
+              onOverride(result.field, ov);
+              setShowForm(false);
+            }}
+            onCancel={() => setShowForm(false)}
+            onClear={() => {
+              onOverride(result.field, null);
+              setShowForm(false);
+            }}
+          />
+        </div>
       ) : null}
+    </div>
+  );
+}
+
+function SummaryBanner({
+  results,
+  overrides,
+  overall,
+}: {
+  results: VerificationResult[];
+  overrides: OverrideMap;
+  overall: OverallResult;
+}) {
+  const passCount = results.filter(
+    (r) => (overrides[r.field]?.status ?? r.status) === "pass"
+  ).length;
+  const failCount = results.filter(
+    (r) => (overrides[r.field]?.status ?? r.status) === "fail"
+  ).length;
+  const reviewCount = results.filter((r) => {
+    const s = overrides[r.field]?.status ?? r.status;
+    return s === "warn" || s === "review" || s === "absent";
+  }).length;
+  const confidence = avgConfidence(results);
+
+  return (
+    <div
+      className={cn(
+        "rounded-xl border p-4",
+        overall === "PASS"
+          ? "border-emerald-500/40 bg-emerald-50/60 dark:bg-emerald-950/20"
+          : overall === "FAIL"
+            ? "border-destructive/40 bg-destructive/5"
+            : "border-amber-500/40 bg-amber-50/60 dark:bg-amber-950/20"
+      )}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="font-semibold text-sm">Verification Complete</p>
+          <div className="mt-1.5 flex flex-wrap gap-3 text-sm">
+            {passCount > 0 ? (
+              <span className="text-emerald-700 dark:text-emerald-400">
+                ✓ {passCount} Passed
+              </span>
+            ) : null}
+            {reviewCount > 0 ? (
+              <span className="text-amber-700 dark:text-amber-400">
+                ⚠ {reviewCount} Needs Review
+              </span>
+            ) : null}
+            {failCount > 0 ? (
+              <span className="text-destructive">✗ {failCount} Failed</span>
+            ) : null}
+          </div>
+        </div>
+        <div className="text-right text-xs text-muted-foreground">
+          <p>
+            Overall:{" "}
+            <span className="font-semibold text-foreground">{overall}</span>
+          </p>
+          <p>Avg confidence: {Math.round(confidence * 100)}%</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StreamingProgress({ completed }: { completed: number }) {
+  const pct = Math.round((completed / TOTAL_FIELDS) * 100);
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-4">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Spinner className="size-4 text-muted-foreground" />
+          <span className="font-medium text-sm">Analyzing label…</span>
+        </div>
+        <span className="text-muted-foreground text-xs">
+          {completed} / {TOTAL_FIELDS} fields verified
+        </span>
+      </div>
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-primary transition-all duration-500"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
     </div>
   );
 }
@@ -316,6 +560,8 @@ function RejectionDraft({ text }: { text: string }) {
   );
 }
 
+// ─── main export ──────────────────────────────────────────────────────────────
+
 export function VerificationResults({
   response,
   streamedFields = [],
@@ -323,6 +569,8 @@ export function VerificationResults({
   processingTimeMs,
   className,
   onOverridesChange,
+  onReupload,
+  onRerun,
 }: {
   response: VerifyResponse | null;
   streamedFields?: VerificationResult[];
@@ -330,6 +578,8 @@ export function VerificationResults({
   processingTimeMs?: number;
   className?: string;
   onOverridesChange?: (overrides: OverrideMap) => void;
+  onReupload?: () => void;
+  onRerun?: () => void;
 }) {
   const [overrides, setOverrides] = useState<OverrideMap>({});
 
@@ -350,7 +600,7 @@ export function VerificationResults({
   };
 
   const fields = response?.results ?? streamedFields;
-  const showPlaceholder = isStreaming && fields.length === 0;
+  const completedCount = fields.length;
 
   const effectiveOverall =
     response && fields.length > 0
@@ -366,54 +616,139 @@ export function VerificationResults({
       : response;
 
   return (
-    <section className={cn("space-y-6", className)}>
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-card p-6">
-        <div>
-          <p className="text-muted-foreground text-sm">Verification results</p>
-          <p className="mt-1 font-semibold text-xl">Label verification</p>
-          {processingTimeMs ? (
-            <p className="mt-1 text-muted-foreground text-xs">
-              Processed in {(processingTimeMs / 1000).toFixed(1)}s
-            </p>
-          ) : null}
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          {response ? (
-            <ExportJsonButton
-              data={exportData}
-              filename="ttb-label-verification.json"
-            />
-          ) : null}
-          {effectiveOverall ? (
-            <OverallResultBadge result={effectiveOverall} />
-          ) : isStreaming ? (
-            <span className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-1.5 font-medium text-muted-foreground text-sm">
-              <span className="size-2 animate-pulse rounded-full bg-amber-500" />
-              Verifying…
-            </span>
-          ) : null}
+    <section className={cn("space-y-4", className)}>
+      {/* ── Header card ── */}
+      <div className="rounded-xl border border-border bg-card p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-muted-foreground text-xs">Verification results</p>
+            <p className="mt-0.5 font-semibold text-lg">Label verification</p>
+            {processingTimeMs ? (
+              <p className="mt-0.5 text-muted-foreground text-xs">
+                Processed in {(processingTimeMs / 1000).toFixed(1)}s
+              </p>
+            ) : null}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Global actions */}
+            {onReupload ? (
+              <Button
+                onClick={onReupload}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                <UploadIcon aria-hidden="true" className="size-3.5" />
+                Re-upload
+              </Button>
+            ) : null}
+            {onRerun ? (
+              <Button
+                onClick={onRerun}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                <RefreshCwIcon aria-hidden="true" className="size-3.5" />
+                Re-run
+              </Button>
+            ) : null}
+
+            {/* Export */}
+            {response ? (
+              <>
+                <Button
+                  onClick={() =>
+                    exportVerificationCsv(response, overrides)
+                  }
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  <DownloadIcon aria-hidden="true" className="size-3.5" />
+                  CSV
+                </Button>
+                <ExportJsonButton
+                  data={exportData}
+                  filename="ttb-label-verification.json"
+                />
+              </>
+            ) : null}
+
+            {/* Overall status */}
+            {effectiveOverall ? (
+              <OverallResultBadge result={effectiveOverall} />
+            ) : isStreaming ? (
+              <span className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1 font-medium text-muted-foreground text-sm">
+                <span className="size-2 animate-pulse rounded-full bg-amber-500" />
+                Verifying…
+              </span>
+            ) : null}
+          </div>
         </div>
       </div>
 
-      {showPlaceholder ? (
-        <div className="rounded-xl border border-dashed border-border bg-muted/20 p-8 text-center text-muted-foreground text-sm">
-          Analyzing label — field results will appear here as they complete.
-        </div>
+      {/* ── Progress bar (streaming only) ── */}
+      {isStreaming ? (
+        <StreamingProgress completed={completedCount} />
       ) : null}
 
-      {fields.length > 0 ? (
-        <div className="grid gap-4">
-          {fields.map((result) => (
-            <ResultRow
-              key={result.field}
-              onOverride={handleOverride}
-              override={overrides[result.field]}
-              result={result}
-            />
-          ))}
-        </div>
+      {/* ── Summary banner (complete) ── */}
+      {!isStreaming && response && fields.length > 0 && effectiveOverall ? (
+        <SummaryBanner
+          overall={effectiveOverall}
+          overrides={overrides}
+          results={fields}
+        />
       ) : null}
 
+      {/* ── Field groups ── */}
+      {Object.entries(FIELD_PRIORITY_GROUPS).map(([groupKey, group]) => {
+        const groupFields = group.fields;
+        const groupResults = groupFields
+          .map((fk) => fields.find((f) => f.field === fk))
+          .filter(Boolean) as VerificationResult[];
+        const pendingFields = isStreaming
+          ? groupFields.filter((fk) => !fields.some((f) => f.field === fk))
+          : [];
+
+        if (groupResults.length === 0 && pendingFields.length === 0) return null;
+
+        return (
+          <div className="space-y-3" key={groupKey}>
+            <div className="flex items-center gap-2">
+              <h3 className="font-medium text-muted-foreground text-xs uppercase tracking-widest">
+                {group.label}
+              </h3>
+              <div className="h-px flex-1 bg-border" />
+            </div>
+
+            <div className="grid gap-3">
+              {/* Completed fields in priority order */}
+              {groupFields.map((fieldKey) => {
+                const result = fields.find((f) => f.field === fieldKey);
+                if (!result) return null;
+                return (
+                  <ResultRow
+                    key={fieldKey}
+                    onOverride={handleOverride}
+                    override={overrides[fieldKey]}
+                    result={result}
+                  />
+                );
+              })}
+
+              {/* Pending placeholders */}
+              {pendingFields.map((fieldKey) => (
+                <PendingFieldCard field={fieldKey} key={fieldKey} />
+              ))}
+            </div>
+          </div>
+        );
+      })}
+
+      {/* ── Rejection draft ── */}
       {showRejection ? (
         <RejectionDraft text={response!.rejectionDraft!} />
       ) : null}

@@ -1,7 +1,7 @@
 "use client";
 
 import { RefreshCwIcon, UploadIcon } from "lucide-react";
-import { type FormEvent, useRef, useState } from "react";
+import { type DragEvent, type FormEvent, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   appendApplicationFields,
@@ -30,6 +30,8 @@ const BEVERAGE_TYPE_LABELS: Record<PrefilledBeverageType, string> = {
   unknown: "Unknown",
 };
 
+const ACCEPTED_MIME = ["image/jpeg", "image/png", "image/webp"];
+
 function mapPrefillToForm(
   prefilled: PrefilledFields
 ): Record<ApplicationFormFieldId, string> {
@@ -43,12 +45,15 @@ function mapPrefillToForm(
   };
 }
 
-function isFormComplete(values: Record<ApplicationFormFieldId, string>): boolean {
+function isFormComplete(
+  values: Record<ApplicationFormFieldId, string>
+): boolean {
   return Object.values(values).every((value) => value.trim().length > 0);
 }
 
 export function VerifyForm() {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   const [formValues, setFormValues] = useState(emptyApplicationFormState);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -65,6 +70,7 @@ export function VerifyForm() {
   const [response, setResponse] = useState<
     (VerifyResponse & { processingTimeMs?: number }) | null
   >(null);
+  const [isDragging, setIsDragging] = useState(false);
 
   const handleFieldChange = (id: ApplicationFormFieldId, value: string) => {
     setFormValues((current) => ({ ...current, [id]: value }));
@@ -110,9 +116,7 @@ export function VerifyForm() {
       toast.success("Fields auto-filled from label");
     } catch (error) {
       setPrefillFailed(true);
-      toast.error(
-        error instanceof Error ? error.message : "Pre-fill failed"
-      );
+      toast.error(error instanceof Error ? error.message : "Pre-fill failed");
     } finally {
       setIsPrefilling(false);
     }
@@ -135,14 +139,39 @@ export function VerifyForm() {
     }
   };
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  // ── drag & drop ──────────────────────────────────────────────────────────
 
-    if (!imageFile) {
-      toast.error("Please upload a label image");
+  const handleDragOver = (e: DragEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: DragEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: DragEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const file = e.dataTransfer.files[0];
+    if (!file) return;
+
+    if (!ACCEPTED_MIME.includes(file.type)) {
+      toast.error("Only JPEG, PNG, or WebP images are supported");
       return;
     }
 
+    handleImageChange(file);
+  };
+
+  // ── submission ───────────────────────────────────────────────────────────
+
+  const submitVerification = async (currentFile: File) => {
     if (!isFormComplete(formValues)) {
       toast.error("Please complete all application fields");
       return;
@@ -153,7 +182,7 @@ export function VerifyForm() {
 
     try {
       const formData = new FormData();
-      formData.append("image", imageFile);
+      formData.append("image", currentFile);
       appendApplicationFields(formData, formValues);
 
       const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
@@ -177,6 +206,17 @@ export function VerifyForm() {
     }
   };
 
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!imageFile) {
+      toast.error("Please upload a label image");
+      return;
+    }
+
+    await submitVerification(imageFile);
+  };
+
   const handleVerifyAnother = () => {
     handleImageChange(null);
     setFormValues(emptyApplicationFormState);
@@ -189,6 +229,17 @@ export function VerifyForm() {
     }
   };
 
+  const handleReupload = () => {
+    handleVerifyAnother();
+    setTimeout(() => fileInputRef.current?.click(), 50);
+  };
+
+  const handleRerun = () => {
+    if (imageFile) {
+      void submitVerification(imageFile);
+    }
+  };
+
   const showLowConfidence =
     prefillConfidence !== null &&
     prefillConfidence < PREFILL_LOW_CONFIDENCE_THRESHOLD;
@@ -198,16 +249,21 @@ export function VerifyForm() {
 
   return (
     <div className="grid gap-8 lg:grid-cols-2 lg:items-start">
-      <form className="space-y-6" onSubmit={handleSubmit}>
+      <form className="space-y-4" onSubmit={handleSubmit} ref={formRef}>
         <section className="rounded-xl border border-border bg-card p-6">
           <h2 className="mb-4 font-medium text-lg">Label image</h2>
 
+          {/* Upload / preview area with drag & drop */}
           <button
             className={cn(
               "flex w-full cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-border bg-muted/30 px-6 py-10 transition-colors hover:bg-muted/50",
-              previewUrl && "border-solid py-4"
+              previewUrl && "border-solid py-4",
+              isDragging && "border-primary bg-primary/5"
             )}
             onClick={() => fileInputRef.current?.click()}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
@@ -222,14 +278,28 @@ export function VerifyForm() {
                 className="max-h-64 w-full rounded-lg object-contain"
                 src={previewUrl}
               />
+            ) : isDragging ? (
+              <>
+                <UploadIcon
+                  aria-hidden="true"
+                  className="size-8 text-primary"
+                />
+                <span className="font-medium text-primary text-sm">
+                  Drop label image here
+                </span>
+              </>
             ) : (
               <>
                 <UploadIcon
                   aria-hidden="true"
                   className="size-8 text-muted-foreground"
                 />
-                <span className="text-muted-foreground text-sm">
-                  Click to upload JPEG, PNG, or WebP (max 10 MB)
+                <span className="text-center text-muted-foreground text-sm">
+                  Drag &amp; drop or click to upload
+                  <br />
+                  <span className="text-xs">
+                    JPEG, PNG, or WebP (max 10 MB)
+                  </span>
                 </span>
               </>
             )}
@@ -260,7 +330,7 @@ export function VerifyForm() {
                 variant="outline"
               >
                 <RefreshCwIcon aria-hidden="true" className="size-4" />
-                Retry
+                Retry auto-fill
               </Button>
             ) : null}
 
@@ -279,7 +349,9 @@ export function VerifyForm() {
           ) : null}
 
           {prefillWarning ? (
-            <p className="mt-2 text-muted-foreground text-xs">{prefillWarning}</p>
+            <p className="mt-2 text-muted-foreground text-xs">
+              {prefillWarning}
+            </p>
           ) : null}
         </section>
 
@@ -311,18 +383,24 @@ export function VerifyForm() {
         {isSubmitting || response || streamedFields.length > 0 ? (
           <VerificationResults
             isStreaming={isSubmitting}
+            onRerun={imageFile && response ? handleRerun : undefined}
+            onReupload={response ? handleReupload : undefined}
             processingTimeMs={response?.processingTimeMs}
             response={response}
             streamedFields={streamedFields}
           />
         ) : (
           <div className="rounded-xl border border-dashed border-border bg-muted/20 p-10 text-center">
+            <UploadIcon
+              aria-hidden="true"
+              className="mx-auto mb-3 size-8 text-muted-foreground/50"
+            />
             <p className="font-medium text-muted-foreground">
-              Results will stream here
+              Ready to verify
             </p>
             <p className="mt-2 text-muted-foreground text-sm leading-relaxed">
-              Upload a label, enter application fields, and run verification.
-              Each field card appears as analysis completes.
+              Upload a label image and fill in the application fields.
+              Field results will appear here as each one completes.
             </p>
           </div>
         )}
