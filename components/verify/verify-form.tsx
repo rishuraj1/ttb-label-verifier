@@ -4,6 +4,7 @@ import { RefreshCwIcon, UploadIcon } from "lucide-react";
 import { type DragEvent, type FormEvent, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
+  APPLICATION_FORM_FIELDS,
   appendApplicationFields,
   ApplicationFieldsSection,
   type ApplicationFormFieldId,
@@ -45,10 +46,14 @@ function mapPrefillToForm(
   };
 }
 
+const REQUIRED_FIELDS: ApplicationFormFieldId[] = APPLICATION_FORM_FIELDS.filter(
+  (f) => f.priority !== "optional"
+).map((f) => f.id);
+
 function isFormComplete(
   values: Record<ApplicationFormFieldId, string>
 ): boolean {
-  return Object.values(values).every((value) => value.trim().length > 0);
+  return REQUIRED_FIELDS.every((id) => values[id].trim().length > 0);
 }
 
 export function VerifyForm() {

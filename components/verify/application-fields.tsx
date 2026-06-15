@@ -67,7 +67,7 @@ function FieldInput({
         name={field.id}
         onChange={(e) => onChange(field.id, e.target.value)}
         placeholder={field.placeholder}
-        required
+        required={field.priority !== "optional"}
         value={value}
       />
     </div>
