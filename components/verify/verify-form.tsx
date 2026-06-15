@@ -1,6 +1,6 @@
 "use client";
 
-import { SparklesIcon, UploadIcon } from "lucide-react";
+import { RefreshCwIcon, UploadIcon } from "lucide-react";
 import { type FormEvent, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -54,6 +54,7 @@ export function VerifyForm() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isPrefilling, setIsPrefilling] = useState(false);
+  const [prefillFailed, setPrefillFailed] = useState(false);
   const [prefillConfidence, setPrefillConfidence] = useState<number | null>(
     null
   );
@@ -74,31 +75,15 @@ export function VerifyForm() {
     setResponse(null);
   };
 
-  const handleImageChange = (file: File | null) => {
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-    }
-
-    setImageFile(file);
-    setPreviewUrl(file ? URL.createObjectURL(file) : null);
-    setPrefillConfidence(null);
-    setPrefillWarning(null);
-    resetResults();
-  };
-
-  const handlePrefill = async () => {
-    if (!imageFile) {
-      toast.error("Upload a label image first");
-      return;
-    }
-
+  const runPrefill = async (file: File) => {
     setIsPrefilling(true);
+    setPrefillFailed(false);
     setPrefillConfidence(null);
     setPrefillWarning(null);
 
     try {
       const formData = new FormData();
-      formData.append("image", imageFile);
+      formData.append("image", file);
 
       const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
       const prefillResponse = await fetch(`${basePath}/api/prefill`, {
@@ -124,11 +109,29 @@ export function VerifyForm() {
       setPrefillWarning(prefilled.warning);
       toast.success("Fields auto-filled from label");
     } catch (error) {
+      setPrefillFailed(true);
       toast.error(
         error instanceof Error ? error.message : "Pre-fill failed"
       );
     } finally {
       setIsPrefilling(false);
+    }
+  };
+
+  const handleImageChange = (file: File | null) => {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+
+    setImageFile(file);
+    setPreviewUrl(file ? URL.createObjectURL(file) : null);
+    setPrefillConfidence(null);
+    setPrefillWarning(null);
+    setPrefillFailed(false);
+    resetResults();
+
+    if (file) {
+      void runPrefill(file);
     }
   };
 
@@ -179,6 +182,7 @@ export function VerifyForm() {
     setFormValues(emptyApplicationFormState);
     setPrefillConfidence(null);
     setPrefillWarning(null);
+    setPrefillFailed(false);
     resetResults();
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -243,17 +247,22 @@ export function VerifyForm() {
           />
 
           <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Button
-              disabled={!imageFile || isPrefilling || isSubmitting}
-              onClick={handlePrefill}
-              type="button"
-              variant="outline"
-            >
-              {isPrefilling ? <Spinner className="size-4" /> : (
-                <SparklesIcon aria-hidden="true" className="size-4" />
-              )}
-              {isPrefilling ? "Reading label…" : "Pre-fill fields from label"}
-            </Button>
+            {isPrefilling ? (
+              <Button disabled type="button" variant="outline">
+                <Spinner className="size-4" />
+                Reading label…
+              </Button>
+            ) : prefillFailed ? (
+              <Button
+                disabled={isSubmitting}
+                onClick={() => imageFile && void runPrefill(imageFile)}
+                type="button"
+                variant="outline"
+              >
+                <RefreshCwIcon aria-hidden="true" className="size-4" />
+                Retry
+              </Button>
+            ) : null}
 
             {prefillConfidence !== null ? (
               <Badge variant="outline">
