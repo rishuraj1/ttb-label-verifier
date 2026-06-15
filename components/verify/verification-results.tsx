@@ -1,8 +1,6 @@
 "use client";
 
 import {
-  CopyIcon,
-  CheckIcon,
   PencilIcon,
   XIcon,
   ChevronDownIcon,
@@ -11,7 +9,7 @@ import {
   RefreshCwIcon,
   UploadIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   FIELD_LABELS,
   FIELD_ORDER,
@@ -499,6 +497,61 @@ function SummaryBanner({
   );
 }
 
+function ResultsQuickList({
+  results,
+  overrides,
+  fieldTimings,
+  processingTimeMs,
+}: {
+  results: VerificationResult[];
+  overrides: OverrideMap;
+  fieldTimings: Partial<Record<VerifiableFieldKey, number>>;
+  processingTimeMs?: number;
+}) {
+  if (results.length === 0) return null;
+
+  return (
+    <div className="rounded-xl border border-border bg-card overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-border bg-muted/30">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest">
+          Results Overview
+        </p>
+      </div>
+      <ul className="divide-y divide-border">
+        {FIELD_ORDER.map((fieldKey) => {
+          const result = results.find((r) => r.field === fieldKey);
+          if (!result) return null;
+          const effectiveStatus = overrides[fieldKey]?.status ?? result.status;
+          const timingMs = fieldTimings[fieldKey];
+          const timeLabel =
+            timingMs != null
+              ? `${(timingMs / 1000).toFixed(1)}s`
+              : processingTimeMs
+                ? `${(processingTimeMs / 1000).toFixed(1)}s`
+                : null;
+
+          return (
+            <li
+              key={fieldKey}
+              className="flex items-center justify-between gap-3 px-4 py-2.5"
+            >
+              <span className="text-sm">{FIELD_LABELS[fieldKey]}</span>
+              <div className="flex items-center gap-3 shrink-0">
+                {timeLabel ? (
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    {timeLabel}
+                  </span>
+                ) : null}
+                <FieldStatusBadge status={effectiveStatus} />
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 function StreamingProgress({ completed }: { completed: number }) {
   const pct = Math.round((completed / TOTAL_FIELDS) * 100);
 
@@ -523,42 +576,6 @@ function StreamingProgress({ completed }: { completed: number }) {
   );
 }
 
-function RejectionDraft({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  return (
-    <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <h3 className="font-medium text-destructive">TTB Rejection Draft</h3>
-        <Button
-          aria-label={copied ? "Copied" : "Copy rejection draft"}
-          onClick={handleCopy}
-          size="sm"
-          type="button"
-          variant="outline"
-        >
-          {copied ? (
-            <CheckIcon aria-hidden="true" />
-          ) : (
-            <CopyIcon aria-hidden="true" />
-          )}
-          {copied ? "Copied" : "Copy"}
-        </Button>
-      </div>
-      <Textarea
-        className="min-h-48 bg-background/80 font-mono text-sm leading-relaxed"
-        readOnly
-        value={text}
-      />
-    </div>
-  );
-}
 
 // ─── main export ──────────────────────────────────────────────────────────────
 
@@ -582,6 +599,22 @@ export function VerificationResults({
   onRerun?: () => void;
 }) {
   const [overrides, setOverrides] = useState<OverrideMap>({});
+  const [fieldTimings, setFieldTimings] = useState<
+    Partial<Record<VerifiableFieldKey, number>>
+  >({});
+  const startTimeRef = useRef<number>(Date.now());
+  const seenFieldsRef = useRef<Set<VerifiableFieldKey>>(new Set());
+
+  useEffect(() => {
+    const fields = response?.results ?? streamedFields;
+    fields.forEach((r) => {
+      if (!seenFieldsRef.current.has(r.field)) {
+        seenFieldsRef.current.add(r.field);
+        const elapsed = Date.now() - startTimeRef.current;
+        setFieldTimings((prev) => ({ ...prev, [r.field]: elapsed }));
+      }
+    });
+  }, [response, streamedFields]);
 
   const handleOverride = (
     field: VerifiableFieldKey,
@@ -606,9 +639,6 @@ export function VerificationResults({
     response && fields.length > 0
       ? computeEffectiveOverall(fields, overrides)
       : response?.overall ?? null;
-
-  const showRejection =
-    effectiveOverall === "FAIL" && !!response?.rejectionDraft;
 
   const exportData =
     response && Object.keys(overrides).length > 0
@@ -689,18 +719,28 @@ export function VerificationResults({
         </div>
       </div>
 
-      {/* ── Progress bar (streaming only) ── */}
-      {isStreaming ? (
-        <StreamingProgress completed={completedCount} />
-      ) : null}
-
-      {/* ── Summary banner (complete) ── */}
+      {/* ── Summary banner (complete) — at top ── */}
       {!isStreaming && response && fields.length > 0 && effectiveOverall ? (
         <SummaryBanner
           overall={effectiveOverall}
           overrides={overrides}
           results={fields}
         />
+      ) : null}
+
+      {/* ── Results quick list ── */}
+      {!isStreaming && fields.length > 0 ? (
+        <ResultsQuickList
+          fieldTimings={fieldTimings}
+          overrides={overrides}
+          processingTimeMs={processingTimeMs}
+          results={fields}
+        />
+      ) : null}
+
+      {/* ── Progress bar (streaming only) ── */}
+      {isStreaming ? (
+        <StreamingProgress completed={completedCount} />
       ) : null}
 
       {/* ── Field groups ── */}
@@ -748,10 +788,6 @@ export function VerificationResults({
         );
       })}
 
-      {/* ── Rejection draft ── */}
-      {showRejection ? (
-        <RejectionDraft text={response!.rejectionDraft!} />
-      ) : null}
     </section>
   );
 }
