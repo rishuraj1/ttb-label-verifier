@@ -6,7 +6,7 @@ export const applicationFieldsSchema = z.object({
   alcoholContent: z.string().min(1, "Alcohol content is required"),
   netContents: z.string().min(1, "Net contents is required"),
   producerName: z.string().min(1, "Producer name is required"),
-  beverageType: z.string().min(1, "Beverage type is required"),
+  beverageType: z.string().optional().default(""),
 });
 
 export type ApplicationFields = z.infer<typeof applicationFieldsSchema>;
