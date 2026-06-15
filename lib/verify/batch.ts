@@ -104,27 +104,30 @@ export async function runWithConcurrency<T, R>(
   return results;
 }
 
+export type BatchVerificationOptions = {
+  onItemComplete?: (item: BatchItemResult) => void;
+};
+
 export async function runBatchVerification(
   images: ExtractedZipImage[],
-  fields: ApplicationFields
+  fields: ApplicationFields,
+  options?: BatchVerificationOptions
 ): Promise<BatchItemResult[]> {
   return runWithConcurrency(
     images,
     BATCH_CONCURRENCY,
     async (image): Promise<BatchItemResult> => {
+      let item: BatchItemResult;
+
       try {
         const result = await verifyLabelImage(image.buffer, fields, {
           mimeType: image.mimeType,
           filename: image.filename,
         });
 
-        return {
-          filename: image.filename,
-          ...result,
-          error: null,
-        };
+        item = { filename: image.filename, ...result, error: null };
       } catch (error) {
-        return {
+        item = {
           filename: image.filename,
           overall: "FAIL",
           results: [],
@@ -133,6 +136,9 @@ export async function runBatchVerification(
             error instanceof Error ? error.message : "Verification failed",
         };
       }
+
+      options?.onItemComplete?.(item);
+      return item;
     }
   );
 }
