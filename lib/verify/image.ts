@@ -1,35 +1,49 @@
-import sharp from "sharp";
 import {
   IMAGE_MIME_TYPES,
   MAX_IMAGE_BYTES,
-  MAX_IMAGE_DIMENSION,
   type LabelImageMimeType,
 } from "./constants";
-
-const MIME_BY_FORMAT: Record<string, LabelImageMimeType> = {
-  jpeg: "image/jpeg",
-  png: "image/png",
-  webp: "image/webp",
-};
 
 export type PreprocessedLabelImage = {
   buffer: Buffer;
   mimeType: LabelImageMimeType;
 };
 
-function mimeFromFilename(filename: string): LabelImageMimeType | null {
-  const lower = filename.toLowerCase();
-
-  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
+function detectMimeType(
+  buffer: Buffer,
+  filename?: string,
+  hint?: string | null
+): LabelImageMimeType | null {
+  // Magic byte detection
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
     return "image/jpeg";
   }
-
-  if (lower.endsWith(".png")) {
+  if (
+    buffer.length >= 8 &&
+    buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47 &&
+    buffer[4] === 0x0d && buffer[5] === 0x0a && buffer[6] === 0x1a && buffer[7] === 0x0a
+  ) {
     return "image/png";
   }
-
-  if (lower.endsWith(".webp")) {
+  if (
+    buffer.length >= 12 &&
+    buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+    buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50
+  ) {
     return "image/webp";
+  }
+
+  // Filename fallback
+  if (filename) {
+    const lower = filename.toLowerCase();
+    if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+    if (lower.endsWith(".png")) return "image/png";
+    if (lower.endsWith(".webp")) return "image/webp";
+  }
+
+  // Hint fallback
+  if (hint && IMAGE_MIME_TYPES.includes(hint as LabelImageMimeType)) {
+    return hint as LabelImageMimeType;
   }
 
   return null;
@@ -44,46 +58,10 @@ export async function preprocessLabelImage(
     throw new Error("Image must be less than 10MB");
   }
 
-  let pipeline = sharp(buffer, { failOn: "none" }).rotate();
-  const metadata = await pipeline.metadata();
-
-  const formatMime =
-    metadata.format && MIME_BY_FORMAT[metadata.format]
-      ? MIME_BY_FORMAT[metadata.format]
-      : null;
-  const filenameMime = filename ? mimeFromFilename(filename) : null;
-  const hintMime = IMAGE_MIME_TYPES.includes(hintMimeType as LabelImageMimeType)
-    ? (hintMimeType as LabelImageMimeType)
-    : null;
-
-  const mimeType = formatMime ?? filenameMime ?? hintMime;
-
+  const mimeType = detectMimeType(buffer, filename, hintMimeType);
   if (!mimeType) {
     throw new Error("Image must be JPEG, PNG, or WebP");
   }
 
-  if (
-    metadata.width &&
-    metadata.height &&
-    (metadata.width > MAX_IMAGE_DIMENSION ||
-      metadata.height > MAX_IMAGE_DIMENSION)
-  ) {
-    pipeline = pipeline.resize({
-      width: MAX_IMAGE_DIMENSION,
-      height: MAX_IMAGE_DIMENSION,
-      fit: "inside",
-      withoutEnlargement: true,
-    });
-  }
-
-  let output = await pipeline.toBuffer();
-
-  if (output.byteLength > MAX_IMAGE_BYTES) {
-    output = await sharp(output)
-      .jpeg({ quality: 85, mozjpeg: true })
-      .toBuffer();
-    return { buffer: output, mimeType: "image/jpeg" };
-  }
-
-  return { buffer: output, mimeType };
+  return { buffer, mimeType };
 }

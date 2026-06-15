@@ -42,7 +42,6 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  serverExternalPackages: ["sharp"],
   experimental: {
     prefetchInlining: true,
     cachedNavigations: true,
