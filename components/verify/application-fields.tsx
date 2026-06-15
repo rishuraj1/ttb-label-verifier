@@ -4,12 +4,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 export const APPLICATION_FORM_FIELDS = [
-  { id: "brandName",      label: "Brand Name",        placeholder: "Old Forester",                              priority: "core"      },
-  { id: "alcoholContent", label: "Alcohol Content",   placeholder: "43% ALC./VOL. (86 PROOF)",                 priority: "core"      },
-  { id: "classType",      label: "Class / Type",      placeholder: "Kentucky Straight Bourbon Whisky",          priority: "important" },
-  { id: "netContents",    label: "Net Contents",      placeholder: "750 mL",                                    priority: "important" },
-  { id: "producerName",   label: "Producer / Bottler",placeholder: "Brown-Forman Distillery, Louisville, KY",  priority: "important" },
-  { id: "beverageType",   label: "Beverage Type",     placeholder: "Distilled Spirits",                         priority: "optional"  },
+  { id: "brandName",      label: "Brand Name",         placeholder: "", priority: "core"      },
+  { id: "alcoholContent", label: "Alcohol Content",    placeholder: "", priority: "core"      },
+  { id: "classType",      label: "Class / Type",       placeholder: "", priority: "important" },
+  { id: "netContents",    label: "Net Contents",       placeholder: "", priority: "important" },
+  { id: "producerName",   label: "Producer / Bottler", placeholder: "", priority: "important" },
+  { id: "beverageType",   label: "Beverage Type",      placeholder: "", priority: "optional"  },
 ] as const;
 
 export type ApplicationFormFieldId =
