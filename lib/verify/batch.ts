@@ -5,12 +5,16 @@ import {
   MAX_ZIP_BYTES,
   type LabelImageMimeType,
 } from "./constants";
+import {
+  buildRowLookup,
+  type ExpectedRow,
+  type ExpectedRowLookup,
+} from "./expected-sheet";
+import { resolveExpectedFields } from "./expected-sheet-match";
+import { prefillFromLabel } from "./prefill-label";
+import { prefilledToApplicationFields } from "./prefill-to-application";
 import { verifyLabelImage } from "./verify-label";
-import type {
-  ApplicationFields,
-  BatchItemResult,
-  VerificationResult,
-} from "./types";
+import type { BatchItemResult, VerificationResult } from "./types";
 import {
   baseFilename,
   isImageEntry,
@@ -89,6 +93,8 @@ export async function runWithConcurrency<T, R>(
 }
 
 export type BatchVerificationOptions = {
+  expectedRows?: ExpectedRow[];
+  rowLookup?: ExpectedRowLookup;
   onFieldComplete?: (
     filename: string,
     field: VerificationResult
@@ -98,9 +104,13 @@ export type BatchVerificationOptions = {
 
 export async function runBatchVerification(
   images: ExtractedZipImage[],
-  fields: ApplicationFields,
   options?: BatchVerificationOptions
 ): Promise<BatchItemResult[]> {
+  const expectedRows = options?.expectedRows;
+  const rowLookup =
+    options?.rowLookup ??
+    (expectedRows ? buildRowLookup(expectedRows) : undefined);
+
   return runWithConcurrency(
     images,
     BATCH_CONCURRENCY,
@@ -108,9 +118,42 @@ export async function runBatchVerification(
       let item: BatchItemResult;
 
       try {
+        const prefilled = await prefillFromLabel(image.buffer, {
+          mimeType: image.mimeType,
+          filename: image.filename,
+        });
+        const extractedFields = prefilledToApplicationFields(prefilled);
+
+        let fields = extractedFields;
+        const useJudge = Boolean(expectedRows && rowLookup);
+
+        if (expectedRows && rowLookup) {
+          const resolved = await resolveExpectedFields(
+            image.filename,
+            rowLookup,
+            expectedRows,
+            extractedFields
+          );
+
+          if (!resolved) {
+            item = {
+              filename: image.filename,
+              overall: "FAIL",
+              results: [],
+              rejectionDraft: null,
+              error: "No matching spreadsheet row found for this image",
+            };
+            options?.onItemComplete?.(item);
+            return item;
+          }
+
+          fields = resolved.fields;
+        }
+
         const result = await verifyLabelImage(image.buffer, fields, {
           mimeType: image.mimeType,
           filename: image.filename,
+          useJudge,
           onFieldComplete: (field) =>
             options?.onFieldComplete?.(image.filename, field),
         });

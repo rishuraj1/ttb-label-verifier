@@ -1,6 +1,6 @@
 "use client";
 
-import { FileArchiveIcon } from "lucide-react";
+import { FileArchiveIcon, FileSpreadsheetIcon } from "lucide-react";
 import {
   type DragEvent,
   type FormEvent,
@@ -9,12 +9,6 @@ import {
   useState,
 } from "react";
 import { toast } from "sonner";
-import {
-  appendApplicationFields,
-  ApplicationFieldsSection,
-  type ApplicationFormFieldId,
-  emptyApplicationFormState,
-} from "@/components/verify/application-fields";
 import { BatchResults } from "@/components/verify/batch-results";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -35,9 +29,11 @@ import { cn } from "@/lib/utils";
 
 export function BatchForm() {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const sheetInputRef = useRef<HTMLInputElement>(null);
   const archiveImagesRef = useRef<ClientZipImage[]>([]);
-  const [formValues, setFormValues] = useState(emptyApplicationFormState);
   const [archiveFile, setArchiveFile] = useState<File | null>(null);
+  const [expectedSheetFile, setExpectedSheetFile] = useState<File | null>(null);
+  const [isSheetDragging, setIsSheetDragging] = useState(false);
   const [archiveImages, setArchiveImages] = useState<ClientZipImage[]>([]);
   const [isExtracting, setIsExtracting] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -67,10 +63,6 @@ export function BatchForm() {
     setCompletedItems({});
     setStreamedFieldsByFile({});
     setProgress({ completed: 0, total: 0 });
-  };
-
-  const handleFieldChange = (id: ApplicationFormFieldId, value: string) => {
-    setFormValues((current) => ({ ...current, [id]: value }));
   };
 
   const loadArchiveImages = async (file: File) => {
@@ -175,7 +167,9 @@ export function BatchForm() {
     try {
       const formData = new FormData();
       formData.append("archive", archiveFile);
-      appendApplicationFields(formData, formValues);
+      if (expectedSheetFile) {
+        formData.append("expectedSheet", expectedSheetFile);
+      }
 
       const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
       await verifyBatchWithStream(`${basePath}/api/verify/batch`, formData, {
@@ -241,6 +235,7 @@ export function BatchForm() {
 
   const handleNewBatch = () => {
     setArchiveFile(null);
+    setExpectedSheetFile(null);
     setArchiveImages((current) => {
       revokeClientZipImages(current);
       return [];
@@ -248,6 +243,9 @@ export function BatchForm() {
     resetVerificationState();
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
+    }
+    if (sheetInputRef.current) {
+      sheetInputRef.current.value = "";
     }
   };
 
@@ -315,6 +313,106 @@ export function BatchForm() {
           />
         </section>
 
+        <section className="rounded-xl border border-border bg-card p-6">
+          <h2 className="mb-1 font-medium text-lg">
+            Expected values spreadsheet
+          </h2>
+          <p className="mb-4 text-muted-foreground text-sm leading-relaxed">
+            Optional .xlsx with COLA application data. When attached, each
+            label is matched to a row by COLA/TTB ID in the filename, with
+            fuzzy + AI fallback when no ID is found.
+          </p>
+
+          <button
+            className={cn(
+              "flex w-full cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-border bg-muted/30 px-6 py-8 transition-colors hover:bg-muted/50",
+              expectedSheetFile && "border-solid py-4",
+              isSheetDragging && "border-primary bg-primary/5"
+            )}
+            onClick={() => sheetInputRef.current?.click()}
+            onDragLeave={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setIsSheetDragging(false);
+            }}
+            onDragOver={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setIsSheetDragging(true);
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setIsSheetDragging(false);
+
+              const file = event.dataTransfer.files[0];
+              if (!file) return;
+
+              if (!file.name.toLowerCase().endsWith(".xlsx")) {
+                toast.error("Please upload an .xlsx spreadsheet");
+                return;
+              }
+
+              setExpectedSheetFile(file);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                sheetInputRef.current?.click();
+              }
+            }}
+            type="button"
+          >
+            <FileSpreadsheetIcon
+              aria-hidden="true"
+              className={cn(
+                "size-8",
+                isSheetDragging ? "text-primary" : "text-muted-foreground"
+              )}
+            />
+            {isSheetDragging ? (
+              <span className="font-medium text-primary text-sm">
+                Drop spreadsheet here
+              </span>
+            ) : expectedSheetFile ? (
+              <span className="font-medium text-sm">{expectedSheetFile.name}</span>
+            ) : (
+              <span className="text-center text-muted-foreground text-sm">
+                Drag &amp; drop or click to upload expected values
+                <br />
+                <span className="text-xs">Excel (.xlsx) only</span>
+              </span>
+            )}
+          </button>
+
+          <input
+            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            className="sr-only"
+            onChange={(event) => {
+              setExpectedSheetFile(event.target.files?.[0] ?? null);
+            }}
+            ref={sheetInputRef}
+            type="file"
+          />
+
+          {expectedSheetFile ? (
+            <Button
+              className="mt-3"
+              onClick={() => {
+                setExpectedSheetFile(null);
+                if (sheetInputRef.current) {
+                  sheetInputRef.current.value = "";
+                }
+              }}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              Remove spreadsheet
+            </Button>
+          ) : null}
+        </section>
+
         {archiveImages.length > 0 ? (
           <BatchResults
             archiveImages={archiveImages}
@@ -324,12 +422,6 @@ export function BatchForm() {
             streamedFieldsByFile={streamedFieldsByFile}
           />
         ) : null}
-
-        <ApplicationFieldsSection
-          idPrefix="batch-"
-          onChange={handleFieldChange}
-          values={formValues}
-        />
 
         <div className="flex flex-wrap items-center gap-3">
           <Button

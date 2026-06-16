@@ -24,6 +24,7 @@ const log = createLogger("verify-label");
 export type VerifyLabelOptions = {
   mimeType?: string | null;
   filename?: string;
+  useJudge?: boolean;
   onFieldComplete?: (field: VerificationResult) => void | Promise<void>;
 };
 
@@ -43,10 +44,11 @@ function isStreamableAiField(f: unknown): f is AiFieldExtraction {
   );
 }
 
-function toVerificationResult(
+async function toVerificationResult(
   f: AiFieldExtraction,
-  expectedValues: Record<VerificationResult["field"], string>
-): VerificationResult {
+  expectedValues: Record<VerificationResult["field"], string>,
+  options?: VerifyLabelOptions
+): Promise<VerificationResult> {
   const merged: VerificationResult = {
     field: f.field,
     status: f.status,
@@ -55,7 +57,9 @@ function toVerificationResult(
     confidence: f.confidence,
     explanation: f.explanation,
   };
-  const [refined] = refineVerificationResults([merged]);
+  const [refined] = await refineVerificationResults([merged], {
+    useJudge: options?.useJudge,
+  });
   return refined;
 }
 
@@ -72,6 +76,7 @@ export async function verifyLabelImage(
     imageSizeBytes: imageBuffer.length,
     brandName: fields.brandName,
     beverageType: fields.beverageType,
+    useJudge: options?.useJudge ?? false,
   });
 
   const { buffer, mimeType } = await preprocessLabelImage(
@@ -106,15 +111,13 @@ export async function verifyLabelImage(
   for await (const partial of partialObjectStream) {
     if (!partial.fields) continue;
 
-    // Only treat a field as complete once the model has started the next one.
-    // The last field in the partial array may still have a streaming explanation.
     for (let i = 0; i < partial.fields.length - 1; i++) {
       if (seenIndices.has(i)) continue;
       const f = partial.fields[i];
       if (!isStreamableAiField(f)) continue;
 
       seenIndices.add(i);
-      const refined = toVerificationResult(f, expectedValues);
+      const refined = await toVerificationResult(f, expectedValues, options);
       streamedFields.add(refined.field);
 
       log.debug("field complete", {
@@ -130,8 +133,9 @@ export async function verifyLabelImage(
   }
 
   const aiResult = await finalObject;
-  const results = refineVerificationResults(
-    mergeVerificationResults(aiResult, fields)
+  const results = await refineVerificationResults(
+    mergeVerificationResults(aiResult, fields),
+    { useJudge: options?.useJudge }
   );
 
   for (const item of results) {
