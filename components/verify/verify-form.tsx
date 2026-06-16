@@ -181,6 +181,7 @@ export function VerifyForm() {
         },
         onComplete: (result) => {
           setResponse(result);
+          setStreamedFields(result.results);
         },
         onError: (message) => {
           throw new Error(message);
