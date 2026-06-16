@@ -54,13 +54,19 @@ export async function POST(request: Request) {
         };
 
         // Tell the client how many images to expect upfront
-        send("start", { total: images.length });
+        send("start", {
+          total: images.length,
+          filenames: images.map((image) => image.filename),
+        });
 
         try {
           let completedCount = 0;
           const items: BatchItemResult[] = [];
 
           await runBatchVerification(images, applicationFields, {
+            onFieldComplete: (filename, field) => {
+              send("field", { filename, ...field });
+            },
             onItemComplete: (item) => {
               completedCount++;
               items.push(item);

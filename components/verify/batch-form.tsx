@@ -1,7 +1,13 @@
 "use client";
 
 import { FileArchiveIcon } from "lucide-react";
-import { type DragEvent, type FormEvent, useRef, useState } from "react";
+import {
+  type DragEvent,
+  type FormEvent,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import {
   appendApplicationFields,
@@ -15,28 +21,99 @@ import { Spinner } from "@/components/ui/spinner";
 import { MAX_BATCH_IMAGES } from "@/lib/verify/constants";
 import { computeBatchSummary } from "@/lib/verify/batch-summary";
 import { verifyBatchWithStream } from "@/lib/verify/batch-sse-client";
-import type { BatchItemResult, BatchVerifyResponse } from "@/lib/verify/types";
+import type {
+  BatchItemResult,
+  BatchVerifyResponse,
+  VerificationResult,
+} from "@/lib/verify/types";
+import {
+  type ClientZipImage,
+  extractImagesFromZipFile,
+  revokeClientZipImages,
+} from "@/lib/verify/zip-client";
 import { cn } from "@/lib/utils";
 
 export function BatchForm() {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const archiveImagesRef = useRef<ClientZipImage[]>([]);
   const [formValues, setFormValues] = useState(emptyApplicationFormState);
   const [archiveFile, setArchiveFile] = useState<File | null>(null);
+  const [archiveImages, setArchiveImages] = useState<ClientZipImage[]>([]);
+  const [isExtracting, setIsExtracting] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
-  const [streamingItems, setStreamingItems] = useState<BatchItemResult[]>([]);
+  const [completedItems, setCompletedItems] = useState<
+    Record<string, BatchItemResult>
+  >({});
+  const [streamedFieldsByFile, setStreamedFieldsByFile] = useState<
+    Record<string, VerificationResult[]>
+  >({});
   const [response, setResponse] = useState<BatchVerifyResponse | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+
+  useEffect(() => {
+    archiveImagesRef.current = archiveImages;
+  }, [archiveImages]);
+
+  useEffect(
+    () => () => {
+      revokeClientZipImages(archiveImagesRef.current);
+    },
+    []
+  );
+
+  const resetVerificationState = () => {
+    setResponse(null);
+    setCompletedItems({});
+    setStreamedFieldsByFile({});
+    setProgress({ completed: 0, total: 0 });
+  };
 
   const handleFieldChange = (id: ApplicationFormFieldId, value: string) => {
     setFormValues((current) => ({ ...current, [id]: value }));
   };
 
+  const loadArchiveImages = async (file: File) => {
+    setIsExtracting(true);
+    resetVerificationState();
+
+    try {
+      const images = await extractImagesFromZipFile(file);
+      setArchiveImages((current) => {
+        revokeClientZipImages(current);
+        return images;
+      });
+      setProgress({ completed: 0, total: images.length });
+    } catch (error) {
+      setArchiveFile(null);
+      setArchiveImages((current) => {
+        revokeClientZipImages(current);
+        return [];
+      });
+      toast.error(
+        error instanceof Error ? error.message : "Failed to read ZIP archive"
+      );
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    } finally {
+      setIsExtracting(false);
+    }
+  };
+
   const handleArchiveChange = (file: File | null) => {
     setArchiveFile(file);
-    setResponse(null);
-    setStreamingItems([]);
-    setProgress({ completed: 0, total: 0 });
+    resetVerificationState();
+
+    if (!file) {
+      setArchiveImages((current) => {
+        revokeClientZipImages(current);
+        return [];
+      });
+      return;
+    }
+
+    void loadArchiveImages(file);
   };
 
   // ── drag & drop ──────────────────────────────────────────────────────────
@@ -84,10 +161,16 @@ export function BatchForm() {
       return;
     }
 
+    if (archiveImages.length === 0) {
+      toast.error("No label images found in the ZIP archive");
+      return;
+    }
+
     setIsSubmitting(true);
     setResponse(null);
-    setStreamingItems([]);
-    setProgress({ completed: 0, total: 0 });
+    setCompletedItems({});
+    setStreamedFieldsByFile({});
+    setProgress({ completed: 0, total: archiveImages.length });
 
     try {
       const formData = new FormData();
@@ -99,8 +182,30 @@ export function BatchForm() {
         onStart: (total) => {
           setProgress({ completed: 0, total });
         },
+        onField: (fieldEvent) => {
+          const { filename, ...field } = fieldEvent;
+          setStreamedFieldsByFile((current) => {
+            const existing = current[filename] ?? [];
+            if (existing.some((item) => item.field === field.field)) {
+              return current;
+            }
+
+            return {
+              ...current,
+              [filename]: [...existing, field],
+            };
+          });
+        },
         onItem: (item) => {
-          setStreamingItems((prev) => [...prev, item]);
+          setCompletedItems((current) => ({
+            ...current,
+            [item.filename]: item,
+          }));
+          setStreamedFieldsByFile((current) => {
+            const next = { ...current };
+            delete next[item.filename];
+            return next;
+          });
           setProgress((prev) => ({
             total: prev.total,
             completed: prev.completed + 1,
@@ -108,8 +213,7 @@ export function BatchForm() {
         },
         onComplete: (result) => {
           setResponse(result);
-          setStreamingItems([]);
-          window.scrollTo({ top: 0, behavior: "smooth" });
+          setStreamedFieldsByFile({});
         },
         onError: (message) => {
           throw new Error(message);
@@ -124,26 +228,32 @@ export function BatchForm() {
     }
   };
 
-  // ── derive display response (partial during streaming) ───────────────────
-
   const displayResponse: BatchVerifyResponse | null =
     response ??
-    (streamingItems.length > 0
+    (isSubmitting
       ? {
-          total: progress.total || streamingItems.length,
-          completed: streamingItems.length,
-          items: streamingItems,
-          summary: computeBatchSummary(streamingItems),
+          total: progress.total || archiveImages.length,
+          completed: progress.completed,
+          items: Object.values(completedItems),
+          summary: computeBatchSummary(Object.values(completedItems)),
         }
       : null);
 
+  const handleNewBatch = () => {
+    setArchiveFile(null);
+    setArchiveImages((current) => {
+      revokeClientZipImages(current);
+      return [];
+    });
+    resetVerificationState();
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
   return (
     <div className="space-y-8">
-      {displayResponse ? (
-        <BatchResults isProcessing={isSubmitting} response={displayResponse} />
-      ) : null}
-
-      <form className="space-y-4" onSubmit={handleSubmit}>
+      <form className="space-y-4" noValidate onSubmit={handleSubmit}>
         <section className="rounded-xl border border-border bg-card p-6">
           <h2 className="mb-4 font-medium text-lg">ZIP archive</h2>
 
@@ -176,6 +286,11 @@ export function BatchForm() {
               <span className="font-medium text-primary text-sm">
                 Drop ZIP archive here
               </span>
+            ) : isExtracting ? (
+              <span className="inline-flex items-center gap-2 font-medium text-sm">
+                <Spinner className="size-4" />
+                Reading images…
+              </span>
             ) : archiveFile ? (
               <span className="font-medium text-sm">{archiveFile.name}</span>
             ) : (
@@ -200,6 +315,16 @@ export function BatchForm() {
           />
         </section>
 
+        {archiveImages.length > 0 ? (
+          <BatchResults
+            archiveImages={archiveImages}
+            completedItems={completedItems}
+            isProcessing={isSubmitting}
+            response={displayResponse}
+            streamedFieldsByFile={streamedFieldsByFile}
+          />
+        ) : null}
+
         <ApplicationFieldsSection
           idPrefix="batch-"
           onChange={handleFieldChange}
@@ -207,7 +332,11 @@ export function BatchForm() {
         />
 
         <div className="flex flex-wrap items-center gap-3">
-          <Button disabled={isSubmitting || !archiveFile} size="lg" type="submit">
+          <Button
+            disabled={isSubmitting || isExtracting || !archiveFile}
+            size="lg"
+            type="submit"
+          >
             {isSubmitting ? <Spinner className="size-4" /> : null}
             {isSubmitting
               ? progress.total > 0
@@ -218,10 +347,7 @@ export function BatchForm() {
 
           {response ? (
             <Button
-              onClick={() => {
-                setResponse(null);
-                setStreamingItems([]);
-              }}
+              onClick={handleNewBatch}
               size="lg"
               type="button"
               variant="outline"
